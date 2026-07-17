@@ -18,7 +18,7 @@ constexpr float kDualInputMaxV = 3.5f;
 constexpr float kDualBoostTargetV = 8.0f;
 constexpr float kDualBuckTargetV = 5.0f;
 constexpr float kDualBoostStartDuty = 5.0f;
-constexpr float kDualBoostMaxDuty = 85.0f;
+constexpr float kDualBoostMaxDuty = 30.0f;
 constexpr float kDualBuckStartDuty = 10.0f;
 constexpr float kDualBuckMaxDuty = 85.0f;
 constexpr float kDualBuckOverVoltageV = 5.75f;
@@ -420,7 +420,7 @@ void startDualControl(Stream& out) {
   if (boostTargetDuty > kDualBoostMaxDuty) {
     out.print(F("Requested 8 V boost duty is "));
     out.print(boostTargetDuty, 1);
-    out.print(F("%; clamping to "));
+    out.print(F("%; clamping boost to safe test limit "));
     out.print(kDualBoostMaxDuty, 1);
     out.println(F("%"));
     boostTargetDuty = kDualBoostMaxDuty;

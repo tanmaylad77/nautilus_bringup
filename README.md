@@ -108,7 +108,7 @@ boost/input monitor on the as-built board. `0x40` is `A1=GND, A0=GND`.
 - Converter PWM defaults to asynchronous bring-up mode: boost drives `BOOST_LO_PWM` and holds `BOOST_HI_PWM` low;
   buck drives `BUCK_HI_PWM` and holds `BUCK_LO_PWM` low. Define `ENABLE_SYNC_COMPLEMENTARY_PWM` only after the
   individual switch nodes have been validated.
-- `dual start` is a controlled two-stage test mode. It estimates boost duty from `D = 1 - Vin / 8 V`, ramps boost
-  duty from 5%, and trims buck duty slowly toward a 5 V output using the buck/output INA228. It disables both stages
-  on INA read failure, input-current limit, or buck output overvoltage.
+- `dual start` is a controlled two-stage test mode. It estimates boost duty from `D = 1 - Vin / 8 V`, then clamps
+  boost duty to a 30% safety limit and ramps from 5%. It trims buck duty slowly toward a 5 V output using the
+  buck/output INA228, and disables both stages on INA read failure, input-current limit, or buck output overvoltage.
 - LoRa pins are defined in code, but LoRa radio validation is intentionally out of scope for this firmware.
