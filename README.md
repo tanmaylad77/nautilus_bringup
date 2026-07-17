@@ -10,7 +10,7 @@ On every reset the firmware:
 - drives BQ25186 `/CE` high, disabling charge
 - forces all boost/buck PWM outputs low
 - keeps converter PWM disabled until an explicit command is received
-- caps PWM duty-cycle commands to 30%
+- caps boost PWM duty-cycle commands to 85% and buck PWM duty-cycle commands to 95%
 
 Always start bench supplies with low current limits and verify rails with a multimeter before enabling the next subsystem.
 
@@ -105,11 +105,10 @@ boost/input monitor on the as-built board. `0x40` is `A1=GND, A0=GND`.
 - BQ25186 access is implemented with local register helpers.
 - INA228 access is implemented with local register helpers using a 50 mOhm shunt value.
 - SCD30 and SPS30 access uses direct Sensirion I2C command framing and CRC checks, avoiding library API differences during bring-up.
-- Converter PWM defaults to asynchronous bring-up mode: boost drives `BOOST_LO_PWM` and holds `BOOST_HI_PWM` low;
-  buck drives `BUCK_HI_PWM` and holds `BUCK_LO_PWM` low. Define `ENABLE_SYNC_COMPLEMENTARY_PWM` only after the
-  individual switch nodes have been validated.
+- Converter PWM is built with `ENABLE_SYNC_COMPLEMENTARY_PWM`: boost and buck use complementary high/low gate-drive
+  outputs with MCPWM deadtime. Remove that build flag for asynchronous bring-up mode.
 - `dual start` is a controlled two-stage test mode. It estimates boost duty from `D = 1 - Vin / 8 V`, then clamps
-  boost duty to a 60% test limit and ramps from 5%. It trims buck duty slowly toward a 5 V output using the
+  boost duty to an 85% test limit and ramps from 5%. It trims buck duty slowly toward a 5 V output using the
   buck/output INA228, and disables both stages on INA read failure, input-current limit, or buck output overvoltage.
   The startup input-voltage sanity window is 0.8 V to 6.5 V to allow the boost input node to float high before load.
 - LoRa pins are defined in code, but LoRa radio validation is intentionally out of scope for this firmware.

@@ -6,9 +6,10 @@
 namespace {
 constexpr uint32_t kPwmFrequencyHz = 50000;
 constexpr uint32_t kDeadtimeTicks = 40;  // 500 ns at the 80 MHz MCPWM clock.
-constexpr float kMaxDutyPercent = 30.0f;
-constexpr float kControlMaxBoostDutyPercent = 60.0f;
-constexpr float kControlMaxBuckDutyPercent = 85.0f;
+constexpr float kManualMaxBoostDutyPercent = 85.0f;
+constexpr float kManualMaxBuckDutyPercent = 95.0f;
+constexpr float kControlMaxBoostDutyPercent = 85.0f;
+constexpr float kControlMaxBuckDutyPercent = 95.0f;
 constexpr float kMinEnabledDutyPercent = 0.001f;
 
 constexpr mcpwm_unit_t kBoostUnit = MCPWM_UNIT_0;
@@ -78,12 +79,12 @@ bool PowerPwm::setDuty(const String& stage, float dutyPercent, Stream& out) {
     latchFault(F("PWM hardware was not initialised; command rejected"), out);
     return false;
   }
-  if (dutyPercent < 0.0f || dutyPercent > kMaxDutyPercent) {
-    latchFault(F("PWM duty rejected; allowed range is 0..30%"), out);
-    disableAll();
-    return false;
-  }
   if (stage == F("boost")) {
+    if (dutyPercent < 0.0f || dutyPercent > kManualMaxBoostDutyPercent) {
+      latchFault(F("Boost PWM duty rejected; allowed range is 0..85%"), out);
+      disableAll();
+      return false;
+    }
     boostDuty_ = dutyPercent;
     if (boostEnabled_) {
       if (dutyPercent <= kMinEnabledDutyPercent) {
@@ -99,6 +100,11 @@ bool PowerPwm::setDuty(const String& stage, float dutyPercent, Stream& out) {
     return true;
   }
   if (stage == F("buck")) {
+    if (dutyPercent < 0.0f || dutyPercent > kManualMaxBuckDutyPercent) {
+      latchFault(F("Buck PWM duty rejected; allowed range is 0..95%"), out);
+      disableAll();
+      return false;
+    }
     buckDuty_ = dutyPercent;
     if (buckEnabled_) {
       if (dutyPercent <= kMinEnabledDutyPercent) {
