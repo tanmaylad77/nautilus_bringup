@@ -7,7 +7,7 @@ namespace {
 constexpr uint32_t kPwmFrequencyHz = 50000;
 constexpr uint32_t kDeadtimeTicks = 40;  // 500 ns at the 80 MHz MCPWM clock.
 constexpr float kMaxDutyPercent = 30.0f;
-constexpr float kControlMaxBoostDutyPercent = 30.0f;
+constexpr float kControlMaxBoostDutyPercent = 60.0f;
 constexpr float kControlMaxBuckDutyPercent = 85.0f;
 constexpr float kMinEnabledDutyPercent = 0.001f;
 
