@@ -111,4 +111,5 @@ boost/input monitor on the as-built board. `0x40` is `A1=GND, A0=GND`.
 - `dual start` is a controlled two-stage test mode. It estimates boost duty from `D = 1 - Vin / 8 V`, then clamps
   boost duty to a 30% safety limit and ramps from 5%. It trims buck duty slowly toward a 5 V output using the
   buck/output INA228, and disables both stages on INA read failure, input-current limit, or buck output overvoltage.
+  The startup input-voltage sanity window is 0.8 V to 6.5 V to allow the boost input node to float high before load.
 - LoRa pins are defined in code, but LoRa radio validation is intentionally out of scope for this firmware.
