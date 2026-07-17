@@ -6,7 +6,10 @@ class PowerPwm {
  public:
   bool begin();
   bool setDuty(const String& stage, float dutyPercent, Stream& out);
+  bool setBoostDutyForControl(float dutyPercent, Stream& out);
+  bool setBuckDutyForControl(float dutyPercent, Stream& out);
   bool enable(const String& stage, Stream& out);
+  bool enableDualForControl(Stream& out);
   bool disable(const String& stage, Stream& out);
   void disableAll();
   void printStatus(Stream& out) const;
@@ -20,6 +23,7 @@ class PowerPwm {
   enum class Stage { Boost, Buck };
 
   bool setDuty(Stage stage, float dutyPercent);
+  bool setDutyForControl(Stage stage, float dutyPercent, float maxDutyPercent, Stream& out);
   bool enableStage(Stage stage, Stream& out);
   void disableStage(Stage stage);
   void latchFault(const __FlashStringHelper* message, Stream& out);

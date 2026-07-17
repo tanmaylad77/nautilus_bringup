@@ -12,6 +12,19 @@ constexpr const char* kFirmwareVersion = "NAUTILUS bring-up 0.1.0";
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kI2cClockHz = 100000;
 constexpr uint32_t kLogIntervalMs = 2000;
+constexpr uint32_t kDualControlIntervalMs = 200;
+constexpr float kDualInputMinV = 0.8f;
+constexpr float kDualInputMaxV = 3.5f;
+constexpr float kDualBoostTargetV = 8.0f;
+constexpr float kDualBuckTargetV = 5.0f;
+constexpr float kDualBoostStartDuty = 5.0f;
+constexpr float kDualBoostMaxDuty = 85.0f;
+constexpr float kDualBuckStartDuty = 10.0f;
+constexpr float kDualBuckMaxDuty = 85.0f;
+constexpr float kDualBuckOverVoltageV = 5.75f;
+constexpr float kDualInputCurrentLimitA = 2.5f;
+constexpr float kDualBoostRampStepPercent = 2.0f;
+constexpr float kDualBuckKpPercentPerVolt = 4.0f;
 
 BQ25186 bq(Wire, I2CDevices::ADDR_BQ25186);
 INA228Device inaBoost("Boost/input", I2CDevices::ADDR_INA228_BOOST, Wire);
@@ -20,7 +33,18 @@ PowerPwm powerPwm;
 
 bool logEnabled = false;
 bool sensorsStarted = false;
+bool inaInitialised = false;
 uint32_t lastLogMs = 0;
+
+struct DualControlState {
+  bool active = false;
+  float boostDuty = 0.0f;
+  float boostDutyTarget = 0.0f;
+  float buckDuty = 0.0f;
+  uint32_t lastTickMs = 0;
+};
+
+DualControlState dualControl;
 
 bool i2cProbe(uint8_t address) {
   Wire.beginTransmission(address);
@@ -221,6 +245,12 @@ bool parseUInt16Token(const String& token, uint16_t& value) {
   return true;
 }
 
+float clampFloat(float value, float low, float high) {
+  if (value < low) return low;
+  if (value > high) return high;
+  return value;
+}
+
 void setPowerPin(gpio_num_t pin, bool on) {
   digitalWrite(pin, on ? HIGH : LOW);
 }
@@ -233,9 +263,10 @@ void printHelp() {
   Serial.println(F("  scan | scan all"));
   Serial.println(F("  ina init | ina read"));
   Serial.println(F("  bq regs | bq profile liion | bq current <mA> | bq charge on|off | bq status"));
-  Serial.println(F("  pwm boost|buck <duty_percent>"));
+  Serial.println(F("  pwm boost|buck <duty_percent>|enable|disable"));
   Serial.println(F("  pwm enable boost|buck"));
   Serial.println(F("  pwm disable boost|buck|all"));
+  Serial.println(F("  dual start|stop|status"));
   Serial.println(F("  sensors init | sensors read"));
   Serial.println(F("  log on|off"));
   Serial.println(F("  faults clear"));
@@ -324,6 +355,154 @@ void runLogTick() {
   runSensorRead();
 }
 
+bool initialiseInas(Stream& out) {
+  const bool okBoost = inaBoost.begin(0.05f, 3.0f, out);
+  const bool okBuck = inaBuck.begin(0.05f, 3.0f, out);
+  inaInitialised = okBoost && okBuck;
+  if (!inaInitialised) {
+    dualControl.active = false;
+    powerPwm.disableAll();
+    out.println(F("INA init problem; PWM forced disabled"));
+  }
+  return inaInitialised;
+}
+
+float idealBoostDutyPercent(float inputVoltageV, float targetVoltageV) {
+  if (inputVoltageV <= 0.0f || targetVoltageV <= inputVoltageV) {
+    return 0.0f;
+  }
+  return 100.0f * (1.0f - (inputVoltageV / targetVoltageV));
+}
+
+void stopDualControl(const __FlashStringHelper* reason, Stream& out) {
+  dualControl.active = false;
+  powerPwm.disableAll();
+  out.print(F("Dual-stage control stopped: "));
+  out.println(reason);
+}
+
+void printDualStatus(Stream& out) {
+  out.print(F("Dual control: "));
+  out.print(dualControl.active ? F("active") : F("inactive"));
+  out.print(F(", boost duty="));
+  out.print(dualControl.boostDuty, 2);
+  out.print(F("% target="));
+  out.print(dualControl.boostDutyTarget, 2);
+  out.print(F("%, buck duty="));
+  out.print(dualControl.buckDuty, 2);
+  out.println(F("%"));
+}
+
+void startDualControl(Stream& out) {
+  if (!inaInitialised && !initialiseInas(out)) {
+    return;
+  }
+
+  const Ina228Sample boostSample = inaBoost.readSample();
+  if (!boostSample.ok) {
+    stopDualControl(F("boost/input INA read failed"), out);
+    return;
+  }
+
+  const float inputV = boostSample.busVoltageV;
+  if (inputV < kDualInputMinV || inputV > kDualInputMaxV) {
+    out.print(F("Refusing dual start; boost/input voltage is "));
+    out.print(inputV, 3);
+    out.print(F(" V, expected "));
+    out.print(kDualInputMinV, 1);
+    out.print(F(".."));
+    out.print(kDualInputMaxV, 1);
+    out.println(F(" V"));
+    return;
+  }
+
+  float boostTargetDuty = idealBoostDutyPercent(inputV, kDualBoostTargetV);
+  if (boostTargetDuty > kDualBoostMaxDuty) {
+    out.print(F("Requested 8 V boost duty is "));
+    out.print(boostTargetDuty, 1);
+    out.print(F("%; clamping to "));
+    out.print(kDualBoostMaxDuty, 1);
+    out.println(F("%"));
+    boostTargetDuty = kDualBoostMaxDuty;
+  }
+  boostTargetDuty = clampFloat(boostTargetDuty, kDualBoostStartDuty, kDualBoostMaxDuty);
+
+  dualControl.active = false;
+  powerPwm.disableAll();
+  dualControl.boostDuty = kDualBoostStartDuty;
+  dualControl.boostDutyTarget = boostTargetDuty;
+  dualControl.buckDuty = kDualBuckStartDuty;
+  dualControl.lastTickMs = millis();
+
+  if (!powerPwm.setBoostDutyForControl(dualControl.boostDuty, out) ||
+      !powerPwm.setBuckDutyForControl(dualControl.buckDuty, out) ||
+      !powerPwm.enableDualForControl(out)) {
+    dualControl.active = false;
+    powerPwm.disableAll();
+    out.println(F("Dual-stage control failed to start"));
+    return;
+  }
+
+  dualControl.active = true;
+  out.print(F("Dual-stage control started. Vin="));
+  out.print(inputV, 3);
+  out.print(F(" V, open-loop boost target duty="));
+  out.print(dualControl.boostDutyTarget, 2);
+  out.println(F("%, buck target=5.00 V"));
+  out.println(F("Watch boost node, buck output, input current, and temperature. 'dual stop' disables both stages."));
+}
+
+void runDualControlTick() {
+  if (!dualControl.active || millis() - dualControl.lastTickMs < kDualControlIntervalMs) {
+    return;
+  }
+  dualControl.lastTickMs = millis();
+
+  const Ina228Sample boostSample = inaBoost.readSample();
+  const Ina228Sample buckSample = inaBuck.readSample();
+  if (!boostSample.ok || !buckSample.ok) {
+    stopDualControl(F("INA read failed"), Serial);
+    return;
+  }
+  if (fabsf(boostSample.currentA) > kDualInputCurrentLimitA) {
+    stopDualControl(F("input current limit exceeded"), Serial);
+    return;
+  }
+  if (buckSample.busVoltageV > kDualBuckOverVoltageV) {
+    stopDualControl(F("buck output overvoltage"), Serial);
+    return;
+  }
+
+  if (dualControl.boostDuty < dualControl.boostDutyTarget) {
+    dualControl.boostDuty = min(dualControl.boostDuty + kDualBoostRampStepPercent,
+                                dualControl.boostDutyTarget);
+    if (!powerPwm.setBoostDutyForControl(dualControl.boostDuty, Serial)) {
+      dualControl.active = false;
+      return;
+    }
+  }
+
+  const float buckErrorV = kDualBuckTargetV - buckSample.busVoltageV;
+  dualControl.buckDuty += kDualBuckKpPercentPerVolt * buckErrorV;
+  dualControl.buckDuty = clampFloat(dualControl.buckDuty, 0.0f, kDualBuckMaxDuty);
+  if (!powerPwm.setBuckDutyForControl(dualControl.buckDuty, Serial)) {
+    dualControl.active = false;
+    return;
+  }
+
+  Serial.print(F("dual: Vin="));
+  Serial.print(boostSample.busVoltageV, 3);
+  Serial.print(F(" V Iin="));
+  Serial.print(boostSample.currentA, 3);
+  Serial.print(F(" A boostD="));
+  Serial.print(dualControl.boostDuty, 1);
+  Serial.print(F("% Vout="));
+  Serial.print(buckSample.busVoltageV, 3);
+  Serial.print(F(" V buckD="));
+  Serial.print(dualControl.buckDuty, 1);
+  Serial.println(F("%"));
+}
+
 void handlePower(String args) {
   const String rail = nextToken(args);
   const String state = nextToken(args);
@@ -351,12 +530,7 @@ void handlePower(String args) {
 void handleIna(String args) {
   const String sub = nextToken(args);
   if (sub == F("init")) {
-    const bool okBoost = inaBoost.begin(0.05f, 3.0f, Serial);
-    const bool okBuck = inaBuck.begin(0.05f, 3.0f, Serial);
-    if (!(okBoost && okBuck)) {
-      powerPwm.disableAll();
-      Serial.println(F("INA init problem; PWM forced disabled"));
-    }
+    initialiseInas(Serial);
   } else if (sub == F("read")) {
     inaBoost.printSample(Serial);
     inaBuck.printSample(Serial);
@@ -369,6 +543,7 @@ void handleBq(String args) {
   const String sub = nextToken(args);
   if (sub == F("regs")) {
     if (!bq.dumpRegisters(Serial)) {
+      dualControl.active = false;
       powerPwm.disableAll();
       Serial.println(F("BQ register read failed; PWM forced disabled"));
     }
@@ -421,13 +596,25 @@ void handleBq(String args) {
 }
 
 void handlePwm(String args) {
+  if (dualControl.active) {
+    stopDualControl(F("manual PWM command received"), Serial);
+  }
   const String sub = nextToken(args);
   if (sub == F("boost") || sub == F("buck")) {
     const String dutyToken = nextToken(args);
+    if (dutyToken == F("enable")) {
+      powerPwm.enable(sub, Serial);
+      return;
+    }
+    if (dutyToken == F("disable")) {
+      powerPwm.disable(sub, Serial);
+      return;
+    }
     float duty = 0.0f;
     if (!parseFloatToken(dutyToken, duty)) {
       powerPwm.disable(F("all"), Serial);
-      Serial.println(F("Usage: pwm boost|buck <duty_percent>"));
+      dualControl.active = false;
+      Serial.println(F("Usage: pwm boost|buck <duty_percent>|enable|disable"));
       return;
     }
     powerPwm.setDuty(sub, duty, Serial);
@@ -436,7 +623,20 @@ void handlePwm(String args) {
   } else if (sub == F("disable")) {
     powerPwm.disable(nextToken(args), Serial);
   } else {
-    Serial.println(F("Usage: pwm boost|buck <duty> | pwm enable boost|buck | pwm disable boost|buck|all"));
+    Serial.println(F("Usage: pwm boost|buck <duty>|enable|disable | pwm enable boost|buck | pwm disable boost|buck|all"));
+  }
+}
+
+void handleDual(String args) {
+  const String sub = nextToken(args);
+  if (sub == F("start")) {
+    startDualControl(Serial);
+  } else if (sub == F("stop")) {
+    stopDualControl(F("user command"), Serial);
+  } else if (sub == F("status")) {
+    printDualStatus(Serial);
+  } else {
+    Serial.println(F("Usage: dual start|stop|status"));
   }
 }
 
@@ -471,6 +671,8 @@ void handleLine(String line) {
     handleBq(line);
   } else if (cmd == F("pwm")) {
     handlePwm(line);
+  } else if (cmd == F("dual")) {
+    handleDual(line);
   } else if (cmd == F("sensors")) {
     handleSensors(line);
   } else if (cmd == F("log")) {
@@ -494,6 +696,7 @@ void handleLine(String line) {
     }
   } else {
     Serial.println(F("Unknown command; run 'help'"));
+    dualControl.active = false;
     powerPwm.disableAll();
   }
 }
@@ -512,6 +715,7 @@ void processSerial() {
       line += ch;
     } else {
       line = "";
+      dualControl.active = false;
       powerPwm.disableAll();
       Serial.println(F("Input line too long; PWM forced disabled"));
     }
@@ -558,5 +762,6 @@ void setup() {
 
 void loop() {
   processSerial();
+  runDualControlTick();
   runLogTick();
 }

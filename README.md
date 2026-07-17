@@ -42,10 +42,13 @@ module memory configuration: 16 MB flash and 8 MB OPI PSRAM, with native USB CDC
 - `bq current <mA>`
 - `bq charge on|off`
 - `bq status`
-- `pwm boost <duty_percent>`
-- `pwm buck <duty_percent>`
+- `pwm boost <duty_percent>|enable|disable`
+- `pwm buck <duty_percent>|enable|disable`
 - `pwm enable boost|buck`
 - `pwm disable boost|buck|all`
+- `dual start`
+- `dual stop`
+- `dual status`
 - `sensors init`
 - `sensors read`
 - `log on|off`
@@ -55,11 +58,14 @@ module memory configuration: 16 MB flash and 8 MB OPI PSRAM, with native USB CDC
 
 | Device | Function | Address |
 | --- | --- | --- |
-| INA228 #1 | Boost/input current and voltage monitor | `0x40` |
-| INA228 #2 | Buck/output current and voltage monitor | `0x41` |
+| INA228 #1 | Boost/input current and voltage monitor | `0x44` |
+| INA228 #2 | Buck/output current and voltage monitor | `0x40` |
 | SCD30 | CO2, temperature, humidity sensor | `0x61` |
 | SPS30 | Particulate matter sensor | `0x69` |
 | BQ25186 | Battery charger | `0x6A` |
+
+`0x44` corresponds to the INA228 address-pin state `A1=VS, A0=GND`, matching the
+boost/input monitor on the as-built board. `0x40` is `A1=GND, A0=GND`.
 
 ## Suggested Bring-Up Flow
 
@@ -99,4 +105,10 @@ module memory configuration: 16 MB flash and 8 MB OPI PSRAM, with native USB CDC
 - BQ25186 access is implemented with local register helpers.
 - INA228 access is implemented with local register helpers using a 50 mOhm shunt value.
 - SCD30 and SPS30 access uses direct Sensirion I2C command framing and CRC checks, avoiding library API differences during bring-up.
+- Converter PWM defaults to asynchronous bring-up mode: boost drives `BOOST_LO_PWM` and holds `BOOST_HI_PWM` low;
+  buck drives `BUCK_HI_PWM` and holds `BUCK_LO_PWM` low. Define `ENABLE_SYNC_COMPLEMENTARY_PWM` only after the
+  individual switch nodes have been validated.
+- `dual start` is a controlled two-stage test mode. It estimates boost duty from `D = 1 - Vin / 8 V`, ramps boost
+  duty from 5%, and trims buck duty slowly toward a 5 V output using the buck/output INA228. It disables both stages
+  on INA read failure, input-current limit, or buck output overvoltage.
 - LoRa pins are defined in code, but LoRa radio validation is intentionally out of scope for this firmware.
