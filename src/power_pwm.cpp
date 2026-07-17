@@ -5,7 +5,7 @@
 
 namespace {
 constexpr uint32_t kPwmFrequencyHz = 50000;
-constexpr uint32_t kDeadtimeTicks = 40;  // 500 ns at the 80 MHz MCPWM clock.
+constexpr uint32_t kDeadtimeTicks = 160;  // 2 us at the 80 MHz MCPWM clock.
 constexpr float kManualMaxBoostDutyPercent = 85.0f;
 constexpr float kManualMaxBuckDutyPercent = 95.0f;
 constexpr float kControlMaxBoostDutyPercent = 85.0f;
@@ -237,6 +237,9 @@ bool PowerPwm::setDuty(Stage stage, float dutyPercent) {
   const mcpwm_timer_t timer = stage == Stage::Boost ? kBoostTimer : kBuckTimer;
   if (stage == Stage::Boost) {
 #ifdef ENABLE_SYNC_COMPLEMENTARY_PWM
+    // UCC27282 inputs are active high. In complement mode, BOOST_HI_PWM is the
+    // primary waveform and BOOST_LO_PWM is its deadtime-shifted complement, so
+    // A uses 100-D to make the low-side switch on for the requested boost duty.
     mcpwm_set_duty(kBoostUnit, timer, MCPWM_OPR_A, 100.0f - dutyPercent);
     mcpwm_set_duty_type(kBoostUnit, timer, MCPWM_OPR_A, MCPWM_DUTY_MODE_0);
     mcpwm_set_duty_type(kBoostUnit, timer, MCPWM_OPR_B, MCPWM_DUTY_MODE_0);
@@ -247,6 +250,8 @@ bool PowerPwm::setDuty(Stage stage, float dutyPercent) {
     return true;
   }
 #ifdef ENABLE_SYNC_COMPLEMENTARY_PWM
+  // UCC27282 inputs are active high. For the buck stage, BUCK_HI_PWM is the
+  // primary waveform and BUCK_LO_PWM is its deadtime-shifted complement.
   mcpwm_set_duty(kBuckUnit, timer, MCPWM_OPR_A, dutyPercent);
   mcpwm_set_duty_type(kBuckUnit, timer, MCPWM_OPR_A, MCPWM_DUTY_MODE_0);
   mcpwm_set_duty_type(kBuckUnit, timer, MCPWM_OPR_B, MCPWM_DUTY_MODE_0);
