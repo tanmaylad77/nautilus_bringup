@@ -105,8 +105,9 @@ boost/input monitor on the as-built board. `0x40` is `A1=GND, A0=GND`.
 - BQ25186 access is implemented with local register helpers.
 - INA228 access is implemented with local register helpers using a 50 mOhm shunt value.
 - SCD30 and SPS30 access uses direct Sensirion I2C command framing and CRC checks, avoiding library API differences during bring-up.
-- Converter PWM is built with `ENABLE_SYNC_COMPLEMENTARY_PWM`: boost and buck use complementary high/low gate-drive
-  outputs with MCPWM deadtime. Remove that build flag for asynchronous bring-up mode.
+- Converter PWM is built in asynchronous bring-up mode: boost drives `BOOST_LO_PWM` and holds `BOOST_HI_PWM` low;
+  buck drives `BUCK_HI_PWM` and holds `BUCK_LO_PWM` low. Define `ENABLE_SYNC_COMPLEMENTARY_PWM` only after the
+  individual switch nodes have been validated.
 - `dual start` is a controlled two-stage test mode. It estimates boost duty from `D = 1 - Vin / 8 V`, then clamps
   boost duty to an 85% test limit and ramps from 5%. It trims buck duty slowly toward a 5 V output using the
   buck/output INA228, and disables both stages on INA read failure, input-current limit, or buck output overvoltage.
